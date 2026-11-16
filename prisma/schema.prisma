@@ -1,0 +1,60 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Problem {
+  id         String       @id @default(cuid())
+  lcNumber   Int?         @unique
+  slug       String       @unique
+  title      String
+  leetcodeUrl String?
+  neetcodeUrl String?
+  difficulty String
+  topics     String       @default("[]")
+  pattern    String?
+  notes      String?
+  lists      String       @default("[]")
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+  attempts   Attempt[]
+  review     ReviewState?
+}
+
+model Attempt {
+  id              String   @id @default(cuid())
+  problemId       String
+  problem         Problem  @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  attemptedAt     DateTime
+  outcome         String
+  rating          Int
+  timeMinutes     Int?
+  language        String?
+  approach        String?
+  timeComplexity  String?
+  spaceComplexity String?
+  mistakes        String?
+  code            String?
+  isReview        Boolean  @default(false)
+  source          String   @default("manual")
+  notionPage      String?
+  createdAt        DateTime @default(now())
+
+  @@index([problemId, attemptedAt])
+}
+
+model ReviewState {
+  problemId      String   @id
+  problem        Problem  @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  easeFactor     Float    @default(2.5)
+  intervalDays   Int      @default(0)
+  repetitions    Int      @default(0)
+  lapses         Int      @default(0)
+  dueAt          DateTime
+  lastReviewedAt DateTime?
+  suspended      Boolean  @default(false)
+}
