@@ -3,14 +3,39 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  // Pooled connection for the app; direct connection for migrations (Neon's pooler can't run them).
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_URL_UNPOOLED")
 }
 
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  passwordHash String
+  createdAt    DateTime  @default(now())
+  problems     Problem[]
+  sessions     Session[]
+}
+
+/// One signed-in browser. The id is the SHA-256 of the cookie token, so a leaked DB row can't be replayed.
+model Session {
+  id        String   @id
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+/// Problems belong to one account; everything else (attempts, review state) hangs off a problem.
 model Problem {
   id         String       @id @default(cuid())
-  lcNumber   Int?         @unique
-  slug       String       @unique
+  userId     String
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lcNumber   Int?
+  slug       String
   title      String
   leetcodeUrl String?
   neetcodeUrl String?
@@ -23,6 +48,9 @@ model Problem {
   updatedAt  DateTime     @updatedAt
   attempts   Attempt[]
   review     ReviewState?
+
+  @@unique([userId, slug])
+  @@unique([userId, lcNumber])
 }
 
 model Attempt {

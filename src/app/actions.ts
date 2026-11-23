@@ -2,7 +2,9 @@
 
 import { endOfDay, startOfDay, subDays } from "date-fns";
 import { revalidatePath } from "next/cache";
+import { notFound } from "next/navigation";
 import { z } from "zod";
+import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { serializeJsonArray } from "@/lib/json";
 import { parseLeetCodeUrl, slugify } from "@/lib/leetcode";
@@ -39,11 +41,13 @@ async function refreshReview(problemId: string) {
 }
 
 export async function upsertProblem(input: unknown) {
+  const user = await requireUser();
   const parsed = problemInputSchema.parse(input);
   const problem = await db.problem.upsert({
-    where: { slug: parsed.slug },
+    where: { userId_slug: { userId: user.id, slug: parsed.slug } },
     create: {
       ...parsed,
+      userId: user.id,
       topics: serializeJsonArray(parsed.topics),
       lists: serializeJsonArray(parsed.lists),
     },
@@ -61,10 +65,11 @@ export async function upsertProblem(input: unknown) {
 }
 
 async function resolveProblem(input: z.infer<typeof attemptInputSchema>) {
+  const user = await requireUser();
   const slug = input.slug ?? (input.url ? parseLeetCodeUrl(input.url) : null) ?? slugify(input.title);
   const existing = input.problemId
-    ? await db.problem.findUnique({ where: { id: input.problemId } })
-    : await db.problem.findUnique({ where: { slug } });
+    ? await db.problem.findFirst({ where: { id: input.problemId, userId: user.id } })
+    : await db.problem.findUnique({ where: { userId_slug: { userId: user.id, slug } } });
   if (existing) return existing;
   return upsertProblem({ ...input, slug, leetcodeUrl: input.url });
 }
@@ -102,24 +107,27 @@ export async function logAttempt(input: unknown) {
 }
 
 export async function updateAttempt(id: string, patch: unknown) {
-  const parsed = attemptInputSchema.partial().omit({ title: true, difficulty: true }).parse(patch);
-  const attempt = await db.attempt.update({ where: { id }, data: parsed });
+  const user = await requireUser();
+  const parsed = attemptInputSchema.partial().omit({ title: true, difficulty: true, problemId: true, slug: true }).parse(patch);
+  const attempt = await db.attempt.update({ where: { id, problem: { userId: user.id } }, data: parsed });
   await refreshReview(attempt.problemId);
   revalidatePath(`/problems/${(await db.problem.findUniqueOrThrow({ where: { id: attempt.problemId } })).slug}`);
   return attempt;
 }
 
 export async function deleteAttempt(id: string) {
-  const attempt = await db.attempt.delete({ where: { id } });
+  const user = await requireUser();
+  const attempt = await db.attempt.delete({ where: { id, problem: { userId: user.id } } });
   await refreshReview(attempt.problemId);
   revalidatePath("/problems");
   return attempt;
 }
 
 export async function updateProblem(id: string, patch: unknown) {
+  const user = await requireUser();
   const parsed = problemInputSchema.partial().omit({ slug: true, title: true, leetcodeUrl: true, neetcodeUrl: true }).parse(patch);
   const problem = await db.problem.update({
-    where: { id },
+    where: { id, userId: user.id },
     data: {
       ...parsed,
       topics: parsed.topics ? serializeJsonArray(parsed.topics) : undefined,
@@ -132,15 +140,17 @@ export async function updateProblem(id: string, patch: unknown) {
 }
 
 export async function updateProblemLinks(id: string, links: unknown) {
-  const problem = await db.problem.update({ where: { id }, data: problemLinksSchema.parse(links) });
+  const user = await requireUser();
+  const problem = await db.problem.update({ where: { id, userId: user.id }, data: problemLinksSchema.parse(links) });
   revalidatePath("/");
   revalidatePath(`/problems/${problem.slug}`);
   return problem;
 }
 
 export async function getDueQueue(today = new Date()) {
+  const user = await requireUser();
   return db.reviewState.findMany({
-    where: { dueAt: { lte: endOfDay(today) }, suspended: false },
+    where: { dueAt: { lte: endOfDay(today) }, suspended: false, problem: { userId: user.id } },
     include: { problem: { include: { attempts: { orderBy: { attemptedAt: "desc" }, take: 3 } } } },
     orderBy: [{ dueAt: "asc" }, { easeFactor: "asc" }],
   });
@@ -154,21 +164,23 @@ const DAILY_LIMIT = 10;
  * Anything past the limit stays due and rolls into tomorrow's list.
  */
 export async function getTodayPlan(today = new Date()) {
+  const user = await requireUser();
+  const mine = { problem: { userId: user.id } };
   const start = startOfDay(today);
   const end = endOfDay(today);
   const [reviewedToday, due, totalDue] = await Promise.all([
     db.reviewState.findMany({
-      where: { lastReviewedAt: { gte: start, lte: end }, dueAt: { gt: end } },
+      where: { lastReviewedAt: { gte: start, lte: end }, dueAt: { gt: end }, ...mine },
       include: { problem: { include: { _count: { select: { attempts: true } } } } },
       orderBy: { lastReviewedAt: "asc" },
     }),
     db.reviewState.findMany({
-      where: { dueAt: { lte: end }, suspended: false },
+      where: { dueAt: { lte: end }, suspended: false, ...mine },
       include: { problem: true },
       orderBy: [{ dueAt: "asc" }, { lapses: "desc" }, { easeFactor: "asc" }],
       take: DAILY_LIMIT,
     }),
-    db.reviewState.count({ where: { dueAt: { lte: end }, suspended: false } }),
+    db.reviewState.count({ where: { dueAt: { lte: end }, suspended: false, ...mine } }),
   ]);
   // A first attempt at a new problem isn't a review, so it doesn't count toward the list.
   const done = reviewedToday.filter((review) => review.problem._count.attempts > 1);
@@ -177,7 +189,8 @@ export async function getTodayPlan(today = new Date()) {
 }
 
 export async function toggleSuspend(problemId: string) {
-  const current = await db.reviewState.findUniqueOrThrow({ where: { problemId } });
+  const user = await requireUser();
+  const current = await db.reviewState.findUniqueOrThrow({ where: { problemId, problem: { userId: user.id } } });
   const updated = await db.reviewState.update({
     where: { problemId },
     data: { suspended: !current.suspended },
@@ -189,12 +202,14 @@ export async function toggleSuspend(problemId: string) {
 }
 
 export async function getStats() {
+  const user = await requireUser();
+  const mine = { problem: { userId: user.id } };
   const [problems, attempts, due, upcoming] = await Promise.all([
-    db.problem.findMany({ include: { attempts: true } }),
-    db.attempt.findMany({ where: { attemptedAt: { gte: subDays(new Date(), 7) } } }),
-    db.reviewState.count({ where: { dueAt: { lte: endOfDay(new Date()) }, suspended: false } }),
+    db.problem.findMany({ where: { userId: user.id }, include: { attempts: true } }),
+    db.attempt.findMany({ where: { attemptedAt: { gte: subDays(new Date(), 7) }, ...mine } }),
+    db.reviewState.count({ where: { dueAt: { lte: endOfDay(new Date()) }, suspended: false, ...mine } }),
     db.reviewState.count({
-      where: { dueAt: { gt: endOfDay(new Date()), lte: endOfDay(new Date(Date.now() + 7 * 86400000)) }, suspended: false },
+      where: { dueAt: { gt: endOfDay(new Date()), lte: endOfDay(new Date(Date.now() + 7 * 86400000)) }, suspended: false, ...mine },
     }),
   ]);
   const days = new Set(attempts.map((attempt) => startOfDay(attempt.attemptedAt).toISOString()));
@@ -216,7 +231,9 @@ export async function getStats() {
 }
 
 export async function getRecentAttempts() {
+  const user = await requireUser();
   return db.attempt.findMany({
+    where: { problem: { userId: user.id } },
     include: { problem: true },
     orderBy: { attemptedAt: "desc" },
     take: 10,
@@ -224,15 +241,20 @@ export async function getRecentAttempts() {
 }
 
 export async function getProblems() {
+  const user = await requireUser();
   return db.problem.findMany({
+    where: { userId: user.id },
     include: { attempts: { orderBy: { attemptedAt: "desc" } }, review: true },
     orderBy: { updatedAt: "desc" },
   });
 }
 
 export async function getProblem(slug: string) {
-  return db.problem.findUniqueOrThrow({
-    where: { slug },
+  const user = await requireUser();
+  const problem = await db.problem.findUnique({
+    where: { userId_slug: { userId: user.id, slug } },
     include: { attempts: { orderBy: { attemptedAt: "desc" } }, review: true },
   });
+  if (!problem) notFound();
+  return problem;
 }

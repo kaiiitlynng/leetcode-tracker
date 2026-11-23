@@ -4,12 +4,14 @@ import { parse } from "papaparse";
 import { normalizeCsv } from "../src/lib/import/normalize";
 import { runImport } from "../src/lib/import/run";
 import { db } from "../src/lib/db";
+import { userFromArgs } from "../src/lib/import/user";
 import { parseNotionPage, type NotionPage } from "../src/lib/notion";
 
 const root = path.join(process.cwd(), "notion-data");
 const generated = path.join(root, "_generated");
 
 async function main() {
+  const user = await userFromArgs();
   const files = await fs.readdir(root, { recursive: true });
   const csvFiles = files.filter((file) => file.endsWith(".csv"));
   const preferred = csvFiles.find((file) => file.includes("_all")) || csvFiles[0];
@@ -23,8 +25,8 @@ async function main() {
 
   // The export is a full snapshot: replace previously imported attempts so dates and page links are rebuilt.
   // Problems (and the links you entered on them) are kept.
-  const removed = await db.attempt.deleteMany({ where: { source: "notion-data" } });
-  console.log(`Replacing ${removed.count} previously imported attempt(s).`);
+  const removed = await db.attempt.deleteMany({ where: { source: "notion-data", problem: { userId: user.id } } });
+  console.log(`Importing into ${user.email}; replacing ${removed.count} previously imported attempt(s).`);
   await fs.mkdir(generated, { recursive: true });
   await fs.writeFile(path.join(generated, "normalized.json"), JSON.stringify(rows, null, 2));
   const parsedCsv = parse<Record<string, string>>(csv, { header: true, skipEmptyLines: true });
@@ -32,7 +34,7 @@ async function main() {
   const samples = columns.map((column) => `| ${column} | ${parsedCsv.data.slice(0, 3).map((item) => item[column]).filter(Boolean).join("; ").replace(/\|/g, "\\|") || "—" } |`).join("\n");
   await fs.writeFile(path.join(process.cwd(), "docs/notion-data-inventory.md"), `# Notion data inventory\n\n| File/type | Details |\n|---|---|\n${files.map((file) => `| ${file} | ${file.endsWith(".csv") ? "CSV export" : file.endsWith(".md") ? "Markdown page" : "Asset"} |`).join("\n")}\n\n## Canonical CSV columns and samples\n\n| Column | Samples |\n|---|---|\n${samples}\n\nCanonical CSV: \`${preferred}\`; normalized rows: ${rows.length}.`);
   await fs.writeFile(path.join(process.cwd(), "docs/import-mapping.md"), "# Import mapping\n\n| Source status | Outcome | Rating |\n|---|---|---:|\n| Got It | SOLVED | 4 |\n| Shaky | SOLVED | 3 |\n| Missed | FAILED | 1 |\n| Unknown/empty | SOLVED | 3 |\n\nThe `_all.csv` export is preferred. Source files are read-only; generated files are written under `notion-data/_generated/`.\n");
-  console.log(await runImport(rows));
+  console.log(await runImport(user.id, rows));
 }
 
 const clean = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");

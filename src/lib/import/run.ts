@@ -3,16 +3,17 @@ import { serializeJsonArray } from "@/lib/json";
 import { rebuildReviewState } from "@/lib/srs/replay";
 import type { ImportRow, ImportSummary } from "./types";
 
-export async function runImport(rows: ImportRow[]): Promise<ImportSummary> {
+/** Import rows into one account's problems. */
+export async function runImport(userId: string, rows: ImportRow[]): Promise<ImportSummary> {
   const summary: ImportSummary = { problemsCreated: 0, problemsMerged: 0, attemptsAdded: 0, duplicatesSkipped: 0, invalidRows: [] };
   const affected = new Set<string>();
   for (const [index, row] of rows.entries()) {
     if (!row.title) { summary.invalidRows.push({ row: index + 1, reason: "Missing title" }); continue; }
     const slug = row.slug || row.title.toLowerCase().replace(/\s+/g, "-");
-    let problem = await db.problem.findUnique({ where: { slug } });
+    let problem = await db.problem.findUnique({ where: { userId_slug: { userId, slug } } });
     if (!problem) {
       problem = await db.problem.create({ data: {
-        slug, title: row.title, leetcodeUrl: row.url, lcNumber: row.lcNumber,
+        userId, slug, title: row.title, leetcodeUrl: row.url, lcNumber: row.lcNumber,
         difficulty: row.difficulty || "Medium", topics: serializeJsonArray(row.topics || []),
         pattern: row.pattern, notes: row.notes, lists: serializeJsonArray(row.lists || []),
       }});
