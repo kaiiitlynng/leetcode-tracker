@@ -1,8 +1,9 @@
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { notionAssetUrl, type NotionPage } from "@/lib/notion";
+import type { NotionPage } from "@/lib/notion";
+import { notionAssetUrl } from "@/lib/notion-url";
 
-/** Server-rendered body of one Notion page: its property table, then the markdown. */
+/** Body of one Notion page: its property table, then the markdown. */
 export default function NotionPageView({ page }: { page: NotionPage }) {
   return (
     <>

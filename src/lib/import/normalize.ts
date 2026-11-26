@@ -5,10 +5,10 @@ import type { ImportRow } from "./types";
 const aliases: Record<keyof ImportRow, string[]> = {
   title: ["title", "name", "problem", "question"], lcNumber: ["#", "no", "number", "id", "problem number", "lc #"],
   url: ["url", "link", "leetcode link"], difficulty: ["difficulty", "level"], topics: ["topics", "tags", "category", "type"],
-  pattern: ["pattern", "technique", "approach type"], attemptedAt: ["date", "date solved", "solved on", "attempted", "last attempted", "last reviewed"],
+  patterns: ["pattern", "technique", "approach type"], attemptedAt: ["date", "date solved", "solved on", "attempted", "last attempted", "last reviewed"],
   outcome: ["status", "confidence", "result", "solved?", "rating"], timeMinutes: ["time", "time taken", "minutes", "duration"],
   notes: ["notes", "comments", "insight", "takeaways"], code: ["code", "solution"], slug: [], lists: [], rating: [],
-  language: [], approach: [], mistakes: [], source: [], notionPage: [],
+  approach: [], mistakes: [], source: [], notionPage: [],
 };
 const clean = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
 function findColumn(headers: string[], field: keyof ImportRow) {
@@ -42,7 +42,7 @@ export function normalizeCsv(csv: string, source: ImportRow["source"] = "upload"
       title, url, slug: url ? parseLeetCodeUrl(url) ?? slugify(title) : slugify(title),
       lcNumber: get("lcNumber") ? Number(get("lcNumber")) : undefined,
       difficulty: (get("difficulty") as ImportRow["difficulty"]) || "Medium",
-      topics: values(get("topics")), pattern: get("pattern"), notes: get("notes"), code: get("code"),
+      topics: values(get("topics")), patterns: values(get("patterns")), notes: get("notes"), code: get("code"),
       attemptedAt: rawDate ? new Date(rawDate).toISOString() : undefined,
       outcome: mapped.outcome, rating: mapped.rating, source,
     }];

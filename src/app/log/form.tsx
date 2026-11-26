@@ -1,20 +1,20 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { logAttempt } from "../actions";
+import { openAttempt } from "../attempts/url";
 import { parseLeetCodeUrl, slugify } from "@/lib/leetcode";
 import { suggestedRating, type Outcome } from "@/lib/srs/rating";
 import type { Rating } from "@/lib/srs/sm2";
-import { patternColor } from "@/lib/patterns";
+import { PATTERNS, canonicalPattern, patternColor } from "@/lib/patterns";
 
-const patterns = ["Arrays", "Two pointers", "Sliding window", "Binary search", "Stack", "Linked list", "Trees", "Graphs", "Dynamic programming", "Greedy", "Backtracking", "Intervals"];
-
-export type LogInitial = { url?: string; title?: string; difficulty?: "Easy" | "Medium" | "Hard"; pattern?: string; number?: number };
+export type LogInitial = { problemId?: string; url?: string; title?: string; difficulty?: "Easy" | "Medium" | "Hard"; patterns?: string[]; number?: number };
 
 export default function LogForm({ onSaved, initial = {} }: { onSaved?: () => void; initial?: LogInitial }) {
   const router = useRouter();
-  const initialPattern = initial.pattern && (patterns.find((p) => p.toLowerCase() === initial.pattern!.toLowerCase()) ?? initial.pattern);
+  const pathname = usePathname();
+  const initialPatterns = [...new Set((initial.patterns ?? []).map(canonicalPattern))];
   const [url, setUrl] = useState(initial.url ?? "");
   const [title, setTitle] = useState(initial.title ?? "");
   const [difficulty, setDifficulty] = useState<"Easy" | "Medium" | "Hard">(initial.difficulty ?? "Medium");
@@ -22,7 +22,10 @@ export default function LogForm({ onSaved, initial = {} }: { onSaved?: () => voi
   const [time, setTime] = useState("");
   const [rating, setRating] = useState<Rating>(3);
   const [message, setMessage] = useState("");
-  const [details, setDetails] = useState({ number: initial.number?.toString() ?? "", topics: "", pattern: initialPattern ?? "", approach: "", mistakes: "", code: "" });
+  const [saving, setSaving] = useState(false);
+  const [patterns, setPatterns] = useState<string[]>(initialPatterns);
+  const togglePattern = (pattern: string) => setPatterns((prev) => prev.includes(pattern) ? prev.filter((p) => p !== pattern) : [...prev, pattern]);
+  const [details, setDetails] = useState({ number: initial.number?.toString() ?? "", timeComplexity: "", spaceComplexity: "", approach: "", mistakes: "", code: "" });
   const setDetail = (key: keyof typeof details, value: string) => setDetails((prev) => ({ ...prev, [key]: value }));
   const updateSuggestion = (nextOutcome: Outcome, nextDifficulty = difficulty, nextTime = time) => {
     setOutcome(nextOutcome);
@@ -31,26 +34,34 @@ export default function LogForm({ onSaved, initial = {} }: { onSaved?: () => voi
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setMessage("");
+    setSaving(true);
     try {
-      await logAttempt({
+      // Changing the title, or replacing a known URL, means this is a different problem.
+      const sameProblem = title === initial.title && (!initial.url || url === initial.url);
+      const { problem, attempt } = await logAttempt({
+        problemId: sameProblem ? initial.problemId : undefined,
         title: title || (parseLeetCodeUrl(url) ?? "Untitled problem").replaceAll("-", " "),
         slug: parseLeetCodeUrl(url) ?? slugify(title),
         url: url || undefined,
         lcNumber: details.number ? Number(details.number) : undefined,
-        difficulty, topics: details.topics.split(",").map((x) => x.trim()).filter(Boolean),
-        pattern: details.pattern || undefined, attemptedAt: new Date(), outcome,
-        rating, timeMinutes: time ? Number(time) : undefined, approach: details.approach || undefined,
+        difficulty, patterns, attemptedAt: new Date(), outcome,
+        rating, timeMinutes: time ? Number(time) : undefined,
+        timeComplexity: details.timeComplexity || undefined,
+        spaceComplexity: details.spaceComplexity || undefined, approach: details.approach || undefined,
         mistakes: details.mistakes || undefined, code: details.code || undefined,
       });
-      setMessage("Saved. Review state updated.");
       onSaved?.();
-      router.refresh();
+      // On Today, the problems list or this problem's page, open the new attempt over the page, which the
+      // action has already refreshed. From anywhere else (the /log page), go to the problem.
+      if (pathname === "/" || pathname === "/problems" || pathname === `/problems/${problem.slug}`) openAttempt(attempt.id);
+      else router.push(`/problems/${problem.slug}?attempt=${attempt.id}`);
     } catch (error) { setMessage(error instanceof Error ? error.message : "Could not save attempt."); }
+    finally { setSaving(false); }
   }
   const field = (id: keyof typeof details, label: string, props: React.InputHTMLAttributes<HTMLInputElement> = {}) => (
     <div className="field"><label htmlFor={id}>{label}</label><input id={id} value={details[id]} onChange={(e) => setDetail(id, e.target.value)} {...props} /></div>
   );
-  const patternOptions = initialPattern && !patterns.includes(initialPattern) ? [...patterns, initialPattern] : patterns;
+  const patternOptions = [...PATTERNS, ...initialPatterns.filter((pattern) => !PATTERNS.includes(pattern))];
   const nextReview = rating === 1 ? "tomorrow" : rating === 2 ? "in 1 day" : rating === 3 ? "in 3 days" : "in 5 days";
 
   return <form className="form card log-form" onSubmit={submit}>
@@ -61,12 +72,11 @@ export default function LogForm({ onSaved, initial = {} }: { onSaved?: () => voi
       <div className="field"><label htmlFor="difficulty">Difficulty</label><select id="difficulty" value={difficulty} onChange={(e) => { const next = e.target.value as typeof difficulty; setDifficulty(next); setRating(suggestedRating(outcome, next, time ? Number(time) : undefined)); }}><option>Easy</option><option>Medium</option><option>Hard</option></select></div>
       <div className="field"><label htmlFor="time">Time <span className="hint">(minutes)</span></label><input id="time" type="number" min="0" value={time} onChange={(e) => { setTime(e.target.value); setRating(suggestedRating(outcome, difficulty, e.target.value ? Number(e.target.value) : undefined)); }} placeholder="25" /></div>
     </div>
-    {field("topics", "Topics", { placeholder: "Array, Hash Table" })}
     <div className="field">
-      <span>Pattern</span>
+      <span>Pattern <span className="hint">· select all that apply</span></span>
       <div className="pill-menu" role="group" aria-label="Pattern">
-        <button type="button" className={`pill ${details.pattern === "" ? "selected" : ""}`} aria-pressed={details.pattern === ""} onClick={() => setDetail("pattern", "")}>None</button>
-        {patternOptions.map((pattern) => <button type="button" data-color={patternColor(pattern)} className={`pill ${details.pattern === pattern ? "selected" : ""}`} aria-pressed={details.pattern === pattern} onClick={() => setDetail("pattern", pattern)} key={pattern}>{pattern}</button>)}
+        {patternOptions.map((pattern) => <button type="button" data-color={patternColor(pattern)} className={`pill ${patterns.includes(pattern) ? "selected" : ""}`} aria-pressed={patterns.includes(pattern)} onClick={() => togglePattern(pattern)} key={pattern}>{pattern}</button>)}
+        {patterns.length > 0 && <button type="button" className="pill" onClick={() => setPatterns([])}>Clear</button>}
       </div>
     </div>
     <hr className="divider" />
@@ -81,13 +91,17 @@ export default function LogForm({ onSaved, initial = {} }: { onSaved?: () => voi
       </div>
     </div>
     <div className="form-grid">
+      {field("timeComplexity", "Time complexity", { placeholder: "O(n)" })}
+      {field("spaceComplexity", "Space complexity", { placeholder: "O(1)" })}
+    </div>
+    <div className="form-grid">
       <div className="field"><label htmlFor="approach">Approach</label><textarea id="approach" value={details.approach} onChange={(e) => setDetail("approach", e.target.value)} placeholder="Hash map of value → index, single pass" /></div>
       <div className="field"><label htmlFor="mistakes">Mistakes / insight</label><textarea id="mistakes" value={details.mistakes} onChange={(e) => setDetail("mistakes", e.target.value)} /></div>
     </div>
     <div className="field"><label htmlFor="code">Code</label><textarea id="code" className="code" spellCheck={false} value={details.code} onChange={(e) => setDetail("code", e.target.value)} /></div>
     <div className="form-footer">
       {message && <p className="form-message" role="status">{message}</p>}
-      <button className="button" type="submit">Save attempt</button>
+      <button className="button" type="submit" disabled={saving}>{saving ? "Saving…" : "Save attempt"}</button>
     </div>
   </form>;
 }

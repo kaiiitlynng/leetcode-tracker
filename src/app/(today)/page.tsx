@@ -1,24 +1,21 @@
 import Link from "next/link";
 import { differenceInCalendarDays } from "date-fns";
-import { getProblems, getTodayPlan } from "./actions";
-import { patternColor } from "@/lib/patterns";
-import LogModal from "./log/modal";
+import { getTodayPlan } from "../actions";
+import AttemptLink from "../attempts/attempt-link";
+import LogModal from "../log/modal";
+import PatternTags from "../patterns";
 
 export const dynamic = "force-dynamic";
 
 type Difficulty = "Easy" | "Medium" | "Hard";
-type PlanProblem = { slug: string; title: string; leetcodeUrl: string | null; neetcodeUrl: string | null; difficulty: string; pattern: string | null; lcNumber: number | null };
-
-function PatternTag({ pattern }: { pattern: string | null }) {
-  return pattern ? <span className="pattern-pill" data-color={patternColor(pattern)}>{pattern}</span> : <span className="dash">—</span>;
-}
+type PlanProblem = { slug: string; title: string; difficulty: string; patterns: string[] };
 
 function ProblemCell({ problem }: { problem: PlanProblem }) {
   return (
     <div className="today-problem">
       <Link className="title-link" href={`/problems/${problem.slug}`}>{problem.title}</Link>
       <span className={`badge ${problem.difficulty.toLowerCase()}`}>{problem.difficulty}</span>
-      {problem.pattern && <PatternTag pattern={problem.pattern} />}
+      <PatternTags patterns={problem.patterns} />
     </div>
   );
 }
@@ -29,7 +26,7 @@ function dueLabel(dueAt: Date, today: Date) {
 }
 
 export default async function Home() {
-  const [problems, plan] = await Promise.all([getProblems(), getTodayPlan()]);
+  const plan = await getTodayPlan();
   const today = new Date();
   const total = plan.done.length + plan.remaining.length;
 
@@ -57,7 +54,7 @@ export default async function Home() {
                   <LogModal
                     buttonClassName="button small"
                     label="Log"
-                    initial={{ url: problem.leetcodeUrl ?? undefined, title: problem.title, difficulty: problem.difficulty as Difficulty, pattern: problem.pattern ?? undefined, number: problem.lcNumber ?? undefined }}
+                    initial={{ problemId: problem.id, url: problem.leetcodeUrl ?? undefined, title: problem.title, difficulty: problem.difficulty as Difficulty, patterns: problem.patterns, number: problem.lcNumber ?? undefined }}
                   />
                 </div>
               </li>
@@ -69,7 +66,7 @@ export default async function Home() {
                 </span>
                 <ProblemCell problem={problem} />
                 <span className="due-label">Done</span>
-                <div className="row-actions" />
+                <div className="row-actions">{problem.attempts[0] && <AttemptLink id={problem.attempts[0].id} className="button secondary small">View log</AttemptLink>}</div>
               </li>
             ))}
           </ul>
@@ -78,32 +75,7 @@ export default async function Home() {
       ) : (
         <div className="empty">
           <p className="empty-title">You’re all caught up</p>
-          <p className="empty-text">Nothing is due for review today.</p>
-        </div>
-      )}
-
-      <h2 className="section-title">All problems</h2>
-      {problems.length ? (
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr><th>Title</th><th>Difficulty</th><th>Pattern</th></tr>
-            </thead>
-            <tbody>
-              {problems.map((problem) => (
-                <tr key={problem.id}>
-                  <td><Link className="title-link" href={`/problems/${problem.slug}`}>{problem.title}</Link></td>
-                  <td><span className={`badge ${problem.difficulty.toLowerCase()}`}>{problem.difficulty}</span></td>
-                  <td><PatternTag pattern={problem.pattern} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <div className="empty">
-          <p className="empty-title">No problems yet</p>
-          <p className="empty-text">Log your first attempt to start your review queue.</p>
+          <p className="empty-text">Nothing is due for review today. <Link className="peek-link" href="/problems">Browse all problems</Link></p>
         </div>
       )}
     </>

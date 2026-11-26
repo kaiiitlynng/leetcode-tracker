@@ -6,7 +6,14 @@ const notionPages = ["./notion-data/tracker/**/*"];
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  experimental: {
+    // Reuse a page fetched in the last 30 s when switching back to it. Server actions that change data
+    // call revalidatePath, which clears this cache, so edits always show.
+    staleTimes: { dynamic: 30 },
+  },
   outputFileTracingIncludes: {
+    "/": notionPages,
+    "/problems": notionPages,
     "/problems/[slug]": notionPages,
     "/api/notion-asset": notionPages,
   },

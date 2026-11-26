@@ -1,26 +1,27 @@
 import Link from "next/link";
 import { getProblem } from "../../actions";
-import { parseJsonArray } from "@/lib/json";
-import { patternColor } from "@/lib/patterns";
-import { readNotionPage } from "@/lib/notion";
-import AttemptPeek from "./attempt-peek";
-import NotionPageView from "./notion-page";
+import { formatDate, formatDateTime, formatOutcome, formatRating } from "@/lib/format";
+import AttemptLink from "../../attempts/attempt-link";
+import LogModal from "../../log/modal";
+import PatternTags from "../../patterns";
 import ProblemLinks from "./problem-links";
+import Pagination from "../../pagination";
+import { pageCount, parsePage } from "@/lib/pagination";
 
-const ratingLabels = ["Again", "Hard", "Good", "Easy"];
-const formatDate = (date: Date | string) => new Date(date).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-const formatDateTime = (date: Date | string) => new Date(date).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
-const formatOutcome = (outcome: string) => outcome.charAt(0) + outcome.slice(1).toLowerCase().replaceAll("_", " ");
-
-export default async function ProblemDetail({ params }: { params: Promise<{ slug: string }> }) {
-  const { slug } = await params;
-  const problem = await getProblem(slug);
-  const topics = parseJsonArray(problem.topics);
-  const notionPages = new Map(await Promise.all(
-    problem.attempts.map(async (attempt) => [attempt.id, attempt.notionPage ? await readNotionPage(attempt.notionPage) : null] as const),
-  ));
+export default async function ProblemDetail({ params, searchParams }: {
+  params: Promise<{ slug: string }>;
+  searchParams: Promise<{ page?: string | string[] }>;
+}) {
+  const [{ slug }, { page: pageParam }] = await Promise.all([params, searchParams]);
+  const requested = parsePage(pageParam);
+  let problem = await getProblem(slug, requested);
+  const pages = pageCount(problem._count.attempts);
+  // A page past the end shows the last page instead of nothing.
+  const page = Math.min(requested, pages);
+  if (page !== requested) problem = await getProblem(slug, page);
+  const attemptCount = problem._count.attempts;
   const stats = [
-    { label: "Attempts", value: problem.attempts.length },
+    { label: "Attempts", value: attemptCount },
     { label: "Ease", value: problem.review?.easeFactor.toFixed(2) ?? "—" },
     { label: "Interval", value: `${problem.review?.intervalDays ?? 0}d` },
     { label: "Next due", value: problem.review ? formatDate(problem.review.dueAt) : "—" },
@@ -30,17 +31,19 @@ export default async function ProblemDetail({ params }: { params: Promise<{ slug
     <>
       <header className="page-header">
         <div>
-          <Link className="eyebrow" href="/">← Problems</Link>
+          <Link className="eyebrow" href="/problems">← Problems</Link>
           <h1 className="title">{problem.title}</h1>
           <div className="meta">
             <span className={`badge ${problem.difficulty.toLowerCase()}`}>{problem.difficulty}</span>
-            {problem.pattern && <span className="pattern-pill" data-color={patternColor(problem.pattern)}>{problem.pattern}</span>}
-            {topics.length > 0 && <span>{topics.join(", ")}</span>}
+            <PatternTags patterns={problem.patterns} />
           </div>
         </div>
         <div className="actions">
           <ProblemLinks problemId={problem.id} leetcodeUrl={problem.leetcodeUrl} neetcodeUrl={problem.neetcodeUrl} />
-          <Link className="button" href="/log">Log redo</Link>
+          <LogModal
+            label="Log redo"
+            initial={{ problemId: problem.id, url: problem.leetcodeUrl ?? undefined, title: problem.title, difficulty: problem.difficulty as "Easy" | "Medium" | "Hard", patterns: problem.patterns, number: problem.lcNumber ?? undefined }}
+          />
         </div>
       </header>
 
@@ -56,30 +59,32 @@ export default async function ProblemDetail({ params }: { params: Promise<{ slug
       <h2 className="section-title">Attempts</h2>
       {problem.attempts.length ? (
         <div className="timeline">
-          {problem.attempts.map((attempt) => {
-            const page = notionPages.get(attempt.id);
-            return (
+          {problem.attempts.map((attempt) => (
             <article className="attempt" key={attempt.id}>
               <div className="attempt-head">
                 <span className="attempt-date">{formatDateTime(attempt.attemptedAt)}</span>
                 <span className="badge">{formatOutcome(attempt.outcome)}</span>
-                <span className="badge">{ratingLabels[attempt.rating - 1] ?? `Rating ${attempt.rating}`}</span>
-                {page && (
-                  <AttemptPeek title={page.title} subtitle={formatDateTime(attempt.attemptedAt)} notionId={page.notionId}>
-                    <NotionPageView page={page} />
-                  </AttemptPeek>
-                )}
+                <span className="badge">{formatRating(attempt.rating)}</span>
+                <AttemptLink id={attempt.id}>Open</AttemptLink>
               </div>
               <div className="attempt-body">
-                {(attempt.approach || !page) && <p>{attempt.approach || "No approach recorded."}</p>}
+                {(attempt.approach || !attempt.notionPage) && <p>{attempt.approach || "No approach recorded."}</p>}
                 {attempt.mistakes && <p><strong>Insight</strong> · {attempt.mistakes}</p>}
                 {attempt.code && <details><summary>Show code</summary><pre><code>{attempt.code}</code></pre></details>}
               </div>
             </article>
-            );
-          })}
+          ))}
         </div>
-      ) : (
+      ) : null}
+      {problem.attempts.length > 0 && (
+        <Pagination
+          page={page}
+          pageCount={pages}
+          hrefFor={(target) => (target === 1 ? `/problems/${problem.slug}` : `/problems/${problem.slug}?page=${target}`)}
+          label="Attempt pages"
+        />
+      )}
+      {problem.attempts.length === 0 && (
         <div className="empty">
           <p className="empty-title">No attempts recorded</p>
         </div>

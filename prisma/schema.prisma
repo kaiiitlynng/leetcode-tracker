@@ -1,5 +1,7 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  // One SQL query per findMany/findUnique instead of one per included relation; each round trip to Neon costs ~80 ms.
+  previewFeatures = ["relationJoins"]
 }
 
 datasource db {
@@ -41,7 +43,7 @@ model Problem {
   neetcodeUrl String?
   difficulty String
   topics     String       @default("[]")
-  pattern    String?
+  patterns   String[]     @default([])
   notes      String?
   lists      String       @default("[]")
   createdAt  DateTime     @default(now())

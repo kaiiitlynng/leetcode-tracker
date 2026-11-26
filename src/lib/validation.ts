@@ -15,7 +15,7 @@ export const problemInputSchema = z.object({
   lcNumber: z.number().int().positive().optional(),
   difficulty: z.enum(["Easy", "Medium", "Hard"]),
   topics: z.array(z.string()).default([]),
-  pattern: z.string().optional(),
+  patterns: z.array(z.string()).default([]),
   notes: z.string().optional(),
   lists: z.array(z.string()).default([]),
 });
@@ -33,13 +33,12 @@ export const attemptInputSchema = z.object({
   lcNumber: z.number().int().positive().optional(),
   difficulty: z.enum(["Easy", "Medium", "Hard"]),
   topics: z.array(z.string()).default([]),
-  pattern: z.string().optional(),
+  patterns: z.array(z.string()).default([]),
   lists: z.array(z.string()).default([]),
   attemptedAt: z.coerce.date(),
   outcome: outcomeSchema,
   rating: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]).optional(),
   timeMinutes: z.number().int().nonnegative().optional(),
-  language: z.string().optional(),
   approach: z.string().optional(),
   timeComplexity: z.string().optional(),
   spaceComplexity: z.string().optional(),
@@ -47,4 +46,17 @@ export const attemptInputSchema = z.object({
   code: z.string().optional(),
   isReview: z.boolean().default(false),
   source: z.enum(["manual", "notion-data", "upload"]).default("manual"),
+});
+
+const clearableText = z.string().nullable().optional();
+/** Edits to a saved attempt. No defaults, so fields missing from the patch stay untouched; null clears. */
+export const attemptPatchSchema = z.object({
+  outcome: outcomeSchema.optional(),
+  rating: attemptInputSchema.shape.rating,
+  timeMinutes: z.number().int().nonnegative().nullable().optional(),
+  timeComplexity: clearableText,
+  spaceComplexity: clearableText,
+  approach: clearableText,
+  mistakes: clearableText,
+  code: clearableText,
 });

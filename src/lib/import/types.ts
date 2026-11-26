@@ -5,14 +5,13 @@ export interface ImportRow {
   slug?: string;
   difficulty?: "Easy" | "Medium" | "Hard";
   topics?: string[];
-  pattern?: string;
+  patterns?: string[];
   lists?: string[];
   notes?: string;
   attemptedAt?: string;
   outcome?: "SOLVED" | "SOLVED_WITH_HINT" | "LOOKED_AT_SOLUTION" | "FAILED";
   rating?: 1 | 2 | 3 | 4;
   timeMinutes?: number;
-  language?: string;
   approach?: string;
   mistakes?: string;
   code?: string;

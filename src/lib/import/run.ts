@@ -15,13 +15,13 @@ export async function runImport(userId: string, rows: ImportRow[]): Promise<Impo
       problem = await db.problem.create({ data: {
         userId, slug, title: row.title, leetcodeUrl: row.url, lcNumber: row.lcNumber,
         difficulty: row.difficulty || "Medium", topics: serializeJsonArray(row.topics || []),
-        pattern: row.pattern, notes: row.notes, lists: serializeJsonArray(row.lists || []),
+        patterns: row.patterns ?? [], notes: row.notes, lists: serializeJsonArray(row.lists || []),
       }});
       summary.problemsCreated++;
     } else {
       problem = await db.problem.update({ where: { id: problem.id }, data: {
         title: problem.title || row.title, leetcodeUrl: problem.leetcodeUrl ?? row.url,
-        lcNumber: problem.lcNumber ?? row.lcNumber, pattern: problem.pattern || row.pattern,
+        lcNumber: problem.lcNumber ?? row.lcNumber, patterns: problem.patterns.length ? undefined : row.patterns,
         notes: [problem.notes, row.notes].filter(Boolean).join("\n\n") || null,
       }});
       summary.problemsMerged++;

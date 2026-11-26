@@ -1,5 +1,6 @@
 "use server";
 
+import type { Problem } from "@prisma/client";
 import { endOfDay, startOfDay, subDays } from "date-fns";
 import { revalidatePath } from "next/cache";
 import { notFound } from "next/navigation";
@@ -10,7 +11,8 @@ import { serializeJsonArray } from "@/lib/json";
 import { parseLeetCodeUrl, slugify } from "@/lib/leetcode";
 import { rebuildReviewState } from "@/lib/srs/replay";
 import { suggestedRating } from "@/lib/srs/rating";
-import { attemptInputSchema, problemInputSchema, problemLinksSchema } from "@/lib/validation";
+import { PAGE_SIZE } from "@/lib/pagination";
+import { attemptInputSchema, attemptPatchSchema, problemInputSchema, problemLinksSchema } from "@/lib/validation";
 
 async function refreshReview(problemId: string) {
   const attempts = await db.attempt.findMany({
@@ -56,12 +58,29 @@ export async function upsertProblem(input: unknown) {
       lcNumber: parsed.lcNumber,
       difficulty: parsed.difficulty,
       topics: serializeJsonArray(parsed.topics),
-      pattern: parsed.pattern,
+      patterns: parsed.patterns,
       lists: serializeJsonArray(parsed.lists),
     },
   });
   revalidatePath("/problems");
   return problem;
+}
+
+/**
+ * Logging a known problem fills in details it lacks without overwriting stored ones. Patterns are the
+ * exception: the form starts from the stored ones, so a non-empty selection replaces them.
+ */
+async function fillMissingDetails(problem: Problem, input: z.infer<typeof attemptInputSchema>) {
+  const numberTaken = input.lcNumber != null && problem.lcNumber == null
+    && (await db.problem.findFirst({ where: { userId: problem.userId, lcNumber: input.lcNumber }, select: { id: true } }));
+  return db.problem.update({
+    where: { id: problem.id },
+    data: {
+      leetcodeUrl: problem.leetcodeUrl ?? input.url,
+      patterns: input.patterns.length ? input.patterns : undefined,
+      lcNumber: problem.lcNumber ?? (numberTaken ? undefined : input.lcNumber),
+    },
+  });
 }
 
 async function resolveProblem(input: z.infer<typeof attemptInputSchema>) {
@@ -70,7 +89,7 @@ async function resolveProblem(input: z.infer<typeof attemptInputSchema>) {
   const existing = input.problemId
     ? await db.problem.findFirst({ where: { id: input.problemId, userId: user.id } })
     : await db.problem.findUnique({ where: { userId_slug: { userId: user.id, slug } } });
-  if (existing) return existing;
+  if (existing) return fillMissingDetails(existing, input);
   return upsertProblem({ ...input, slug, leetcodeUrl: input.url });
 }
 
@@ -87,7 +106,6 @@ export async function logAttempt(input: unknown) {
       outcome: parsed.outcome,
       rating,
       timeMinutes: parsed.timeMinutes,
-      language: parsed.language,
       approach: parsed.approach,
       timeComplexity: parsed.timeComplexity,
       spaceComplexity: parsed.spaceComplexity,
@@ -108,19 +126,31 @@ export async function logAttempt(input: unknown) {
 
 export async function updateAttempt(id: string, patch: unknown) {
   const user = await requireUser();
-  const parsed = attemptInputSchema.partial().omit({ title: true, difficulty: true, problemId: true, slug: true }).parse(patch);
-  const attempt = await db.attempt.update({ where: { id, problem: { userId: user.id } }, data: parsed });
-  await refreshReview(attempt.problemId);
-  revalidatePath(`/problems/${(await db.problem.findUniqueOrThrow({ where: { id: attempt.problemId } })).slug}`);
-  return attempt;
+  const data = attemptPatchSchema.parse(patch);
+  // updateMany takes the ownership filter in one statement; update() would add a lookup and a transaction.
+  const { count } = await db.attempt.updateMany({ where: { id, problem: { userId: user.id } }, data });
+  if (!count) throw new Error("Attempt not found");
+  const { problemId } = await db.attempt.findUniqueOrThrow({ where: { id }, select: { problemId: true } });
+  await refreshReview(problemId);
+  revalidateAttemptPages();
+}
+
+/** Attempt changes show on Today, the problems list and every problem page. */
+function revalidateAttemptPages() {
+  revalidatePath("/");
+  revalidatePath("/problems");
+  revalidatePath("/problems/[slug]", "page");
 }
 
 export async function deleteAttempt(id: string) {
   const user = await requireUser();
-  const attempt = await db.attempt.delete({ where: { id, problem: { userId: user.id } } });
-  await refreshReview(attempt.problemId);
-  revalidatePath("/problems");
-  return attempt;
+  const attempt = await db.attempt.findFirst({ where: { id, problem: { userId: user.id } }, select: { problemId: true } });
+  if (!attempt) throw new Error("Attempt not found");
+  await db.attempt.delete({ where: { id } });
+  // With no attempts left there is nothing to review.
+  if (await db.attempt.count({ where: { problemId: attempt.problemId } })) await refreshReview(attempt.problemId);
+  else await db.reviewState.deleteMany({ where: { problemId: attempt.problemId } });
+  revalidateAttemptPages();
 }
 
 export async function updateProblem(id: string, patch: unknown) {
@@ -170,11 +200,13 @@ export async function getTodayPlan(today = new Date()) {
   const end = endOfDay(today);
   const [reviewedToday, due, totalDue] = await Promise.all([
     db.reviewState.findMany({
+      relationLoadStrategy: "join",
       where: { lastReviewedAt: { gte: start, lte: end }, dueAt: { gt: end }, ...mine },
-      include: { problem: { include: { _count: { select: { attempts: true } } } } },
+      include: { problem: { include: { _count: { select: { attempts: true } }, attempts: { select: { id: true }, orderBy: { attemptedAt: "desc" }, take: 1 } } } },
       orderBy: { lastReviewedAt: "asc" },
     }),
     db.reviewState.findMany({
+      relationLoadStrategy: "join",
       where: { dueAt: { lte: end }, suspended: false, ...mine },
       include: { problem: true },
       orderBy: [{ dueAt: "asc" }, { lapses: "desc" }, { easeFactor: "asc" }],
@@ -249,11 +281,17 @@ export async function getProblems() {
   });
 }
 
-export async function getProblem(slug: string) {
+/** A problem with one page (PAGE_SIZE) of its attempts, newest first, and its attempt count. */
+export async function getProblem(slug: string, page = 1) {
   const user = await requireUser();
   const problem = await db.problem.findUnique({
+    relationLoadStrategy: "join",
     where: { userId_slug: { userId: user.id, slug } },
-    include: { attempts: { orderBy: { attemptedAt: "desc" } }, review: true },
+    include: {
+      attempts: { orderBy: { attemptedAt: "desc" }, take: PAGE_SIZE, skip: (page - 1) * PAGE_SIZE },
+      review: true,
+      _count: { select: { attempts: true } },
+    },
   });
   if (!problem) notFound();
   return problem;

@@ -58,6 +58,7 @@ export const getCurrentUser = cache(async () => {
   const token = (await cookies()).get(SESSION_COOKIE)?.value;
   if (!token) return null;
   const session = await db.session.findUnique({
+    relationLoadStrategy: "join",
     where: { id: tokenId(token) },
     include: { user: { select: { id: true, email: true } } },
   });

@@ -54,15 +54,6 @@ export async function readNotionPage(file: string): Promise<NotionPage | null> {
   }
 }
 
-/**
- * Map an image src written in a page (relative, URL-encoded) to the asset route. The route gets the
- * page and the src as written, so it can check the viewer owns the page and the page uses the image.
- */
-export function notionAssetUrl(pageFile: string, src: string): string {
-  if (/^https?:\/\//.test(src)) return src;
-  return `/api/notion-asset?page=${encodeURIComponent(pageFile)}&src=${encodeURIComponent(src)}`;
-}
-
 /** notion-data-relative path of an image src as written in `pageFile`. */
 export function resolveAssetPath(pageFile: string, src: string): string {
   return path.posix.join(path.posix.dirname(pageFile), decodeURIComponent(src));

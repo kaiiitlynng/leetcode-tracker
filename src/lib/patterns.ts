@@ -27,3 +27,15 @@ const colors: Record<string, PatternColor> = {
 export function patternColor(pattern: string | null | undefined): PatternColor {
   return (pattern && colors[pattern.trim().toLowerCase()]) || "gray";
 }
+
+/** Pattern choices offered when logging, in the order they are usually studied. */
+export const PATTERNS = [
+  "Array", "Hash Map", "Two Pointers", "Sliding Window", "Stack", "Binary Search", "Linked List", "Trees", "Tries",
+  "Heap / Priority Queue", "Backtracking", "Graphs", "Advanced Graphs", "1D Dynamic Programming", "2D Dynamic Programming",
+  "Greedy", "Intervals", "Math & Geometry", "Bit Manipulation",
+];
+
+/** Show stored patterns with the standard spelling when they match one, case-insensitively. */
+export function canonicalPattern(pattern: string): string {
+  return PATTERNS.find((option) => option.toLowerCase() === pattern.trim().toLowerCase()) ?? pattern.trim();
+}
